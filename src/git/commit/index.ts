@@ -1,3 +1,7 @@
+import chalk from "npm:chalk";
+import ora from "npm:ora";
+import inquirer from "npm:inquirer";
+
 const CONFIG = {
   token: Deno.env.get("AI_API_TOKEN"),
   model: Deno.env.get("AI_API_MODEL"),
@@ -8,7 +12,7 @@ const CONFIG = {
 
 const MESSAGES = {
   noChanges: "🚫 No hay cambios en el stage",
-  generating: "🔄 Generando nuevo mensaje...",
+  generating: "Generando nuevo mensaje...",
   success: "✨ ¡Commit realizado con éxito!\n",
   creating: "✅ Creando commit...",
   cancelled: "❌ Operación cancelada\n",
@@ -61,6 +65,7 @@ function createPrompt(diffContent: string, additionalContext = "") {
 }
 
 async function makeApiRequest(promptContent: string) {
+  const spinner = ora(MESSAGES.generating).start();
   try {
     const response = await fetch(
       `https://${CONFIG.apiHost}:${CONFIG.apiPort}${CONFIG.apiPath}`,
@@ -83,55 +88,67 @@ async function makeApiRequest(promptContent: string) {
 
     const result = await response.json();
     const content = result.choices[0].message.content.trim();
+    spinner.succeed();
     return JSON.parse(content.replace(/```json|```/g, ""));
   } catch (error) {
-    console.error(MESSAGES.networkError, (error as Error).message);
+    spinner.fail(chalk.red(MESSAGES.networkError + (error as Error).message));
     throw error;
   }
 }
 
 function askForConfirmation(commitMessage: string) {
-  console.log("✨ Mensaje sugerido:");
-  console.log(commitMessage);
+  console.log(chalk.cyan("✨ Mensaje sugerido:\n"));
 
-  const answer = prompt(`¿Qué deseas hacer?
-    - s: Confirmar y crear commit
-    - n: Generar nuevo mensaje
-    - e: Agregar contexto
-    - c: Cancelar operación
-  `);
+  const [commitType, commitContent] = commitMessage.split(": ");
+  console.log(
+    chalk.bold.blue(commitType) + ":",
+    chalk.italic.green(commitContent),
+  );
+  console.log();
 
-  return answer?.toLowerCase() || "c";
+  return inquirer.prompt([{
+    type: "list",
+    name: "action",
+    message: "¿Qué deseas hacer?\n",
+    choices: [
+      { name: "✅ Crear commit", value: "s" },
+      { name: "🔄 Generar nuevo mensaje", value: "n" },
+      { name: "📝 Agregar contexto adicional", value: "e" },
+      { name: "❌ Cancelar operación", value: "c" },
+    ],
+  }]).then((answers) => answers.action);
 }
 
 async function processCommitMessage() {
   const git_diff_str = await getGitDiff();
 
   if (git_diff_str.length === 0) {
-    console.log(MESSAGES.noChanges);
+    console.log(chalk.yellow(MESSAGES.noChanges));
     return;
   }
 
   let content = await makeApiRequest(createPrompt(git_diff_str));
+  console.clear();
   let additionalContext = "";
   let shouldExit = false;
 
   while (!shouldExit) {
-    const answer = askForConfirmation(content.message);
+    const answer = await askForConfirmation(content.message);
 
     switch (answer) {
       case "s": {
-        console.log(MESSAGES.creating);
+        const spinner = ora(MESSAGES.creating).start();
         const command = new Deno.Command("git", {
           args: ["commit", "-m", content.message],
         });
         await command.output();
-        console.log(MESSAGES.success);
+        spinner.succeed(chalk.green(MESSAGES.success));
         shouldExit = true;
         break;
       }
 
       case "n":
+        console.clear();
         content = await makeApiRequest(await createPrompt(git_diff_str));
         break;
 
@@ -143,7 +160,6 @@ async function processCommitMessage() {
         break;
 
       case "c":
-        console.log(MESSAGES.cancelled);
         shouldExit = true;
         break;
 
@@ -151,6 +167,8 @@ async function processCommitMessage() {
         console.log(MESSAGES.invalidOption);
     }
   }
+
+  Deno.exit(0);
 }
 
 await processCommitMessage();
