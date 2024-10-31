@@ -128,12 +128,12 @@ async function processCommitMessage() {
   }
 
   let content = await makeApiRequest(createPrompt(git_diff_str));
-  console.clear();
   let additionalContext = "";
   let shouldExit = false;
 
   while (!shouldExit) {
     const answer = await askForConfirmation(content.message);
+    console.clear();
 
     switch (answer) {
       case "s": {
@@ -148,7 +148,6 @@ async function processCommitMessage() {
       }
 
       case "n":
-        console.clear();
         content = await makeApiRequest(createPrompt(git_diff_str));
         break;
 
