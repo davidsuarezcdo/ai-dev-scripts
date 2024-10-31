@@ -149,7 +149,7 @@ async function processCommitMessage() {
 
       case "n":
         console.clear();
-        content = await makeApiRequest(await createPrompt(git_diff_str));
+        content = await makeApiRequest(createPrompt(git_diff_str));
         break;
 
       case "e":
