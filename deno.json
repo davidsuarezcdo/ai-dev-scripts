@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "commit": "deno run --watch --env-file src/git/commit/index.ts",
+    "compile:commit": "deno compile --allow-run --allow-env --allow-net --env-file --output dist/commit src/git/commit/index.ts"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1"
+  }
+}
