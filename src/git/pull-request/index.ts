@@ -1,5 +1,6 @@
 import chalk from "npm:chalk";
 import ora from "npm:ora";
+import inquirer from "npm:inquirer";
 
 const CONFIG = {
   token: Deno.env.get("AI_API_TOKEN"),
@@ -98,21 +99,11 @@ async function makeApiRequest(promptContent: string) {
   }
 }
 
-async function main() {
-  const branch = Deno.args[0] || 'release';
-  const gitDiff = await getGitDiff(branch);
-
-  if (gitDiff.length === 0) {
-    console.log(chalk.yellow('⚠️  No hay cambios para crear un PR'));
-    Deno.exit(0);
-  }
-
-  const basePath = await getGitBasePath();
-  const prTemplate = getPullRequestTemplate(basePath);
-  const uniqueCommits = await getGitUniqueCommits(branch);
-
-  const prompt = `
+function createPrompt(prTemplate: string, uniqueCommits: string, gitDiff: string, additionalContext = "") {
+  return `
     Eres un arquitecto de software que ayuda a los desarrolladores a crear descripciones y títulos para los PRs.
+
+    ${additionalContext ? `# Contexto adicional proporcionado por el usuario:\n${additionalContext}\n` : ""}
 
     # Instrucciones
     - El título debe ser con formato de semantic release, por ejemplo:
@@ -131,19 +122,81 @@ async function main() {
     # PR TEMPLATE:
     ${prTemplate}
 
-    # Los commits son los siguientes:
+    # Los últimos commits realizados son los siguientes:
     ${uniqueCommits}
-    # El diff es el siguiente:
+    # El diff entre la rama actual y la rama de destino es el siguiente:
     ${gitDiff}
   `;
+}
+
+ function askForConfirmation(content: { title: string, description: string }) {
+  console.log('\n📝 Título del PR:\n');
+  const [commitType, commitContent] = content.title.split(': ');
+  console.log(chalk.bold.blue(`   ${commitType}:`), chalk.green(commitContent), '\n');
+  console.log('📄 Descripción del PR:\n');
+  console.log(content.description);
+  console.log();
+
+  return inquirer.prompt([{
+    type: "list",
+    name: "action",
+    message: "¿Qué deseas hacer?\n",
+    choices: [
+      { name: "✅ Usar esta descripción", value: "s" },
+      { name: "🔄 Generar nueva descripción", value: "n" },
+      { name: "📝 Agregar contexto adicional", value: "e" },
+      { name: "❌ Cancelar operación", value: "c" },
+    ],
+  }]).then((answers) => answers.action);
+}
+
+async function main() {
+  const branch = Deno.args[0] || 'release';
+  const gitDiff = await getGitDiff(branch);
+
+  if (gitDiff.length === 0) {
+    console.log(chalk.yellow('⚠️  No hay cambios para crear un PR'));
+    Deno.exit(0);
+  }
+
+  const basePath = await getGitBasePath();
+  const prTemplate = getPullRequestTemplate(basePath);
+  const uniqueCommits = await getGitUniqueCommits(branch);
+  
+  let content;
+  let additionalContext = "";
+  let shouldExit = false;
 
   try {
-    const content = await makeApiRequest(prompt);
-    console.log('\n📝 Título del PR:\n');
-    const [commitType, commitContent] = content.title.split(': ');
-    console.log(chalk.bold.blue(`   ${commitType}:`), chalk.green(commitContent), '\n');
-    console.log('📄 Descripción del PR:\n');
-    console.log(content.description);
+    while (!shouldExit) {
+      if (!content) {
+        content = await makeApiRequest(createPrompt(prTemplate, uniqueCommits, gitDiff, additionalContext));
+      }
+
+      const answer = await askForConfirmation(content);
+      console.clear();
+
+      switch (answer) {
+        case "s":
+          console.log(chalk.green("✨ ¡Descripción del PR generada exitosamente!"));
+          shouldExit = true;
+          break;
+
+        case "n":
+          content = await makeApiRequest(createPrompt(prTemplate, uniqueCommits, gitDiff, additionalContext));
+          break;
+
+        case "e":
+          additionalContext = prompt("📝 Ingresa contexto adicional para la generación del PR:\n") || "";
+          content = await makeApiRequest(createPrompt(prTemplate, uniqueCommits, gitDiff, additionalContext));
+          break;
+
+        case "c":
+          console.log(chalk.yellow("❌ Operación cancelada"));
+          shouldExit = true;
+          break;
+      }
+    }
   } catch (error) {
     console.error(chalk.red(`❌ ${(error as Error).message}`));
   } finally {
